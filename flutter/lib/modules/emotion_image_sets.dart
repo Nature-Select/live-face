@@ -54,13 +54,12 @@ class EmotionImageSet {
 class EmotionImageSetsManager {
   EmotionImageSetsManager._();
 
-  static final EmotionImageSetsManager _instance =
-      EmotionImageSetsManager._();
+  static final EmotionImageSetsManager _instance = EmotionImageSetsManager._();
 
   static EmotionImageSetsManager get instance => _instance;
 
   /// 内部情绪图像集存储
-  /// Key: 情绪标签（如 '[calm]', '[happy]'）
+  /// Key: 情绪标签（如 '[peace]', '[happy]'）
   /// Value: 对应的4张图像
   final Map<String, EmotionImageSet> _emotionImageSets = {};
 

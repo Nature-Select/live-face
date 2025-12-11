@@ -142,7 +142,7 @@ class FrameSelector {
   late final SpeechHistoryManager _speechHistoryManager;
 
   // Internal State
-  String _currentEmotion = '[calm]';
+  String _currentEmotion = '[peace]';
   ActorState _currentDetectedState = ActorState.idle;
 
   // PAG Animation State
