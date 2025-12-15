@@ -1,1 +1,10 @@
 .claude/
+
+# Dart/Flutter
+.dart_tool/
+.packages
+build/
+*.iml
+.idea/
+*.lock
+pubspec.lock

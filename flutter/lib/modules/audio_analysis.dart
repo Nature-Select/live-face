@@ -3,6 +3,10 @@
 // Provides audio feature extraction for voice activity detection.
 // Adapted from Web Audio API to work with Agora Flutter SDK.
 
+import 'dart:typed_data';
+
+import 'package:fftea/fftea.dart';
+
 import '../config/audio_config.dart';
 
 /// Voice metrics extracted from audio
@@ -76,14 +80,14 @@ class VoiceMetrics {
 
     final bufferLength = samples.length;
 
-    // Calculate RMS energy
+    // 1. Calculate RMS energy
     double energy = 0;
     for (int i = 0; i < bufferLength; i++) {
       energy += samples[i] * samples[i];
     }
     energy = energy / bufferLength;
 
-    // Calculate Zero Crossing Rate
+    // 2. Calculate Zero Crossing Rate
     int zcrCount = 0;
     for (int i = 1; i < bufferLength; i++) {
       if ((samples[i] >= 0) != (samples[i - 1] >= 0)) {
@@ -92,10 +96,44 @@ class VoiceMetrics {
     }
     final zcr = zcrCount / (2 * bufferLength);
 
-    // For spectralCentroid and highFreqEnergy, we would need FFT
-    // For now, return simplified values based on energy
-    final spectralCentroid = energy > 0.001 ? 500.0 : 0.0;
-    final highFreqEnergy = energy * 0.5;
+    // 3. Perform FFT analysis for spectral features
+    final fft = FFT(bufferLength);
+    final samplesFloat64 = Float64List.fromList(samples);
+    final freqDomain = fft.realFft(samplesFloat64);
+    final rawMagnitudes = freqDomain.discardConjugates().magnitudes();
+
+    // Find max magnitude for normalization (similar to Web's 0-255 range)
+    double maxMag = 0;
+    for (int i = 0; i < rawMagnitudes.length; i++) {
+      if (rawMagnitudes[i] > maxMag) {
+        maxMag = rawMagnitudes[i];
+      }
+    }
+    // Avoid division by zero, use a minimum threshold
+    maxMag = maxMag > 0.0001 ? maxMag : 1.0;
+
+    // 4. Calculate Spectral Centroid (frequency center of mass)
+    // Normalize magnitudes to 0-1 range like Web's frequencyData[i] / 255.0
+    double weightedSum = 0;
+    double magnitudeSum = 0;
+    for (int i = 0; i < rawMagnitudes.length; i++) {
+      final normalizedMag = rawMagnitudes[i] / maxMag;
+      weightedSum += i * normalizedMag;
+      magnitudeSum += normalizedMag;
+    }
+    final spectralCentroid = magnitudeSum > 0 ? weightedSum / magnitudeSum : 0.0;
+
+    // 5. Calculate High Frequency Energy (60% and above)
+    // Use normalized magnitudes like Web's (frequencyData[i] / 255.0) ** 2
+    final highFreqStart = (rawMagnitudes.length * config.highFreqBandStart).floor();
+    double highFreqEnergy = 0;
+    int highFreqCount = 0;
+    for (int i = highFreqStart; i < rawMagnitudes.length; i++) {
+      final normalizedMag = rawMagnitudes[i] / maxMag;
+      highFreqEnergy += normalizedMag * normalizedMag;
+      highFreqCount++;
+    }
+    highFreqEnergy = highFreqCount > 0 ? highFreqEnergy / highFreqCount : 0.0;
 
     return VoiceMetrics(
       energy: energy,
