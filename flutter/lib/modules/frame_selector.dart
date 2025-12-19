@@ -32,12 +32,18 @@ class FrameInput {
   /// 待处理的字幕（新字幕到达时才有值）
   final PendingSubtitle? pendingSubtitle;
 
+  /// 🆕 当前轮次的元数据（用于 emoji/PAG 判断）
+  final String? currentTurnEmoji;
+  final int? currentTurnStatus;
+
   /// 当前帧编号
   final int frameNumber;
 
   const FrameInput({
     required this.audioMetrics,
     this.pendingSubtitle,
+    this.currentTurnEmoji,
+    this.currentTurnStatus,
     required this.frameNumber,
   });
 }
@@ -60,11 +66,15 @@ class DisplayedSubtitle {
   final String id;
   final String content;
   final String emotion;
+  final String? emoji; // 🆕
+  final int? turnStatus; // 🆕
 
   const DisplayedSubtitle({
     required this.id,
     required this.content,
     required this.emotion,
+    this.emoji,
+    this.turnStatus,
   });
 }
 
@@ -99,6 +109,9 @@ class FrameOutput {
   /// PAG 动画信息（如果需要显示）
   final PAGOutput? pag;
 
+  /// 🆕 Emoji 信息（用于 emoji overlay 显示）
+  final String? emoji;
+
   /// 检测到的会话状态（推导结果）
   final ActorState detectedState;
 
@@ -117,6 +130,7 @@ class FrameOutput {
   const FrameOutput({
     required this.imageUrl,
     this.pag,
+    this.emoji,
     required this.detectedState,
     required this.currentEmotion,
     required this.shouldDisplaySubtitle,
@@ -133,7 +147,6 @@ class FrameOutput {
 class FrameSelector {
   final VadConfig vadConfig;
   final PauseDetectionConfig pauseDetectionConfig;
-  final int frameInterval;
 
   // Internal Controllers
   late final MouthController _mouthController;
@@ -149,10 +162,13 @@ class FrameSelector {
   String? _pagSrc;
   String? _lastSubtitleId;
 
+  // 🆕 Emoji State
+  String? _currentEmoji;
+  int _lastTurnStatus = 0;
+
   FrameSelector({
     required this.vadConfig,
     required this.pauseDetectionConfig,
-    required this.frameInterval,
     EyesLifecycleConfig? eyesLifecycleConfig,
     EyesTimingConfig? eyesTimingConfig,
     MouthConfig? mouthConfig,
@@ -226,7 +242,26 @@ class FrameSelector {
     final newVoiceActivity = classifyVoiceActivity(energy, zcr, vadConfig);
     final smoothedActivity = _voiceActivityManager.smooth(newVoiceActivity);
 
-    // 2. Check if we should display pending subtitle (voice detected)
+    // 2. Process emoji/PAG only when turnStatus changes from 0 to 1
+    final currentTurnStatus = input.currentTurnStatus ?? 0;
+    if (currentTurnStatus == 1 && _lastTurnStatus != 1) {
+      // Update emoji state
+      if (input.currentTurnEmoji != null) {
+        _currentEmoji = input.currentTurnEmoji;
+        debugPrint('😊 [EMOJI] Set emoji in frameSelector: ${input.currentTurnEmoji}');
+        debugPrint('🚫 [PAG] Skipped due to emoji priority');
+      } else {
+        // No emoji → trigger PAG animation
+        // 使用 _currentEmotion（字幕显示时已保存）而不依赖 pendingSubtitle
+        final emotionForPAG = _currentEmotion.isNotEmpty ? _currentEmotion : '[peace]';
+        final idForPAG = DateTime.now().millisecondsSinceEpoch.toString();
+        _triggerPAGAnimation(emotionForPAG, idForPAG);
+        debugPrint('🎨 [PAG] Lottery triggered (no emoji), emotion: $emotionForPAG');
+      }
+    }
+    _lastTurnStatus = currentTurnStatus;
+
+    // 3. Check if we should display pending subtitle (voice detected)
     bool shouldDisplaySubtitle = false;
     DisplayedSubtitle? displayedSubtitle;
 
@@ -238,6 +273,8 @@ class FrameSelector {
         id: pendingSubtitle.id,
         content: pendingSubtitle.content,
         emotion: pendingSubtitle.emotion,
+        emoji: input.currentTurnEmoji,
+        turnStatus: input.currentTurnStatus,
       );
 
       // Update emotion
@@ -246,9 +283,6 @@ class FrameSelector {
       // Record subtitle frame in history
       _speechHistoryManager.recordSubtitleFrame(frameNumber);
 
-      // Trigger PAG animation (if random selection succeeds)
-      _triggerPAGAnimation(pendingSubtitle.emotion, pendingSubtitle.id);
-
       // State detection: subtitle + voice → SPEAKING
       _currentDetectedState = ActorState.speaking;
 
@@ -256,7 +290,7 @@ class FrameSelector {
       _speechHistoryManager.reset();
     }
 
-    // 3. Update speech history for finish detection
+    // 4. Update speech history for finish detection
     final speechHistoryResult = _speechHistoryManager.update(
       SpeechHistoryInput(
         voiceActivity: smoothedActivity,
@@ -265,7 +299,7 @@ class FrameSelector {
       ),
     );
 
-    // 4. Detect state transitions
+    // 5. Detect state transitions
     if (speechHistoryResult.shouldFinishSpeaking) {
       // Sustained quiet → IDLE
       _currentDetectedState = ActorState.idle;
@@ -278,10 +312,10 @@ class FrameSelector {
       _speechHistoryManager.reset();
     }
 
-    // 5. Update eyes state (natural blinking)
+    // 6. Update eyes state (natural blinking)
     final eyesState = _eyesStateManager.update();
 
-    // 6. Update mouth state (audio-driven, state-aware)
+    // 7. Update mouth state (audio-driven, state-aware)
     final audioFeatures = AudioFeatureSet(
       energy: energy,
       zcr: zcr,
@@ -290,13 +324,13 @@ class FrameSelector {
     );
     final mouthState = _mouthController.update(audioFeatures);
 
-    // 7. Select character frame (emotion + mouth + eyes)
+    // 8. Select character frame (emotion + mouth + eyes)
     final imageUrl = _selectFrame(_currentEmotion, mouthState, eyesState);
 
-    // 8. Return output
     return FrameOutput(
       imageUrl: imageUrl,
       pag: _pagSrc != null ? PAGOutput(src: _pagSrc!, isPlaying: true) : null,
+      emoji: _currentEmoji, // 🆕 返回当前 emoji
       detectedState: _currentDetectedState,
       currentEmotion: _currentEmotion,
       shouldDisplaySubtitle: shouldDisplaySubtitle,
@@ -351,7 +385,6 @@ class FrameSelector {
 FrameSelector createFrameSelector({
   required VadConfig vadConfig,
   required PauseDetectionConfig pauseDetectionConfig,
-  required int frameInterval,
   EyesLifecycleConfig? eyesLifecycleConfig,
   EyesTimingConfig? eyesTimingConfig,
   MouthConfig? mouthConfig,
@@ -359,7 +392,6 @@ FrameSelector createFrameSelector({
   return FrameSelector(
     vadConfig: vadConfig,
     pauseDetectionConfig: pauseDetectionConfig,
-    frameInterval: frameInterval,
     eyesLifecycleConfig: eyesLifecycleConfig,
     eyesTimingConfig: eyesTimingConfig,
     mouthConfig: mouthConfig,

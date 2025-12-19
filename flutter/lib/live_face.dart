@@ -1,5 +1,6 @@
 // Config
 export 'config/audio_config.dart';
+export 'config/emotion.dart'; // 🆕 导出 emotion 解析功能
 
 // Modules - Types
 export 'modules/types.dart';
