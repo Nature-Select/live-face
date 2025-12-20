@@ -14,4 +14,4 @@ const int animationWeight = 3;
 /// - 1 variant (worried, excited, surprised): 3/(7+3) = 30% show
 /// - 2 variants (serious, speechless): 6/(7+6) = 46% show
 /// - 3 variants (angry, happy): 9/(7+9) = 56% show
-const int defaultEmptyWeight = 7;
+const int defaultEmptyWeight = 0;
