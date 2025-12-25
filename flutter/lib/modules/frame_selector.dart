@@ -1,11 +1,12 @@
-// Frame Selector - Unified Animation Frame Selection
-//
-// 统一的帧选择器，封装所有动画状态更新逻辑。
-//
-// 核心理念：
-// 1. 纯函数处理每一帧的数据
-// 2. 不依赖外部状态机，而是推导出当前应该处于的状态
-// 3. 调用方负责协调状态机事件触发
+/// Frame Selector - Unified Animation Frame Selection
+///
+/// 统一的帧选择器，封装所有动画状态更新逻辑。
+///
+/// 核心理念：
+/// 1. 纯函数处理每一帧的数据
+/// 2. 不依赖外部状态机，而是推导出当前应该处于的状态
+/// 3. 调用方负责协调状态机事件触发
+library;
 
 import 'package:flutter/foundation.dart';
 
@@ -24,66 +25,41 @@ import 'vad.dart';
 // Types
 // ============================================================================
 
+/// 当前消息数据（包含所有元数据）
+class CurrentMessage {
+  final String id;
+  final String content;
+  final String? emotion;
+  final String? emoji;
+  final int? turnId;
+  final int? turnStatus;
+
+  const CurrentMessage({
+    required this.id,
+    required this.content,
+    this.emotion,
+    this.emoji,
+    this.turnId,
+    this.turnStatus,
+  });
+}
+
 /// 输入数据 - 每一帧的原始数据
 class FrameInput {
   /// 音频特征（来自 AudioAnalyzer）
   final VoiceMetrics audioMetrics;
 
-  /// 待处理的字幕（新字幕到达时才有值）
-  final PendingSubtitle? pendingSubtitle;
-
-  /// 🆕 当前轮次的元数据（用于 emoji/PAG 判断）
-  final String? currentTurnEmoji;
-  final int? currentTurnStatus;
+  /// 当前未显示的消息（包含所有元数据）
+  final CurrentMessage? currentMessage;
 
   /// 当前帧编号
   final int frameNumber;
 
   const FrameInput({
     required this.audioMetrics,
-    this.pendingSubtitle,
-    this.currentTurnEmoji,
-    this.currentTurnStatus,
+    this.currentMessage,
     required this.frameNumber,
   });
-}
-
-/// 待处理的字幕
-class PendingSubtitle {
-  final String emotion;
-  final String id;
-  final String content;
-
-  const PendingSubtitle({
-    required this.emotion,
-    required this.id,
-    required this.content,
-  });
-}
-
-/// 显示的字幕信息
-class DisplayedSubtitle {
-  final String id;
-  final String content;
-  final String emotion;
-  final String? emoji; // 🆕
-  final int? turnStatus; // 🆕
-
-  const DisplayedSubtitle({
-    required this.id,
-    required this.content,
-    required this.emotion,
-    this.emoji,
-    this.turnStatus,
-  });
-}
-
-/// PAG 动画输出
-class PAGOutput {
-  final String src;
-  final bool isPlaying;
-
-  const PAGOutput({required this.src, required this.isPlaying});
 }
 
 /// 调试信息
@@ -106,23 +82,20 @@ class FrameOutput {
   /// 角色图片 URL
   final String imageUrl;
 
-  /// PAG 动画信息（如果需要显示）
-  final PAGOutput? pag;
+  /// PAG 动画 src（直接返回 String?）
+  final String? pag;
 
-  /// 🆕 Emoji 信息（用于 emoji overlay 显示）
+  /// Emoji URL（用于 emoji overlay 显示）
   final String? emoji;
 
   /// 检测到的会话状态（推导结果）
   final ActorState detectedState;
 
-  /// 情绪标签（用于字幕显示）
-  final String currentEmotion;
-
-  /// 是否显示新字幕（pendingSubtitle 被消费）
+  /// 是否显示新字幕
   final bool shouldDisplaySubtitle;
 
-  /// 显示的字幕信息
-  final DisplayedSubtitle? displayedSubtitle;
+  /// 应该显示的消息 ID
+  final String? messageIdToDisplay;
 
   /// 调试信息
   final FrameDebugInfo? debug;
@@ -132,9 +105,8 @@ class FrameOutput {
     this.pag,
     this.emoji,
     required this.detectedState,
-    required this.currentEmotion,
     required this.shouldDisplaySubtitle,
-    this.displayedSubtitle,
+    this.messageIdToDisplay,
     this.debug,
   });
 }
@@ -155,16 +127,19 @@ class FrameSelector {
   late final SpeechHistoryManager _speechHistoryManager;
 
   // Internal State
-  String _currentEmotion = '[peace]';
   ActorState _currentDetectedState = ActorState.idle;
+  // Emotion used for rendering frames (only update when SPEAKING starts)
+  String _currentRenderedEmotion = '[peace]';
 
   // PAG Animation State
   String? _pagSrc;
-  String? _lastSubtitleId;
 
-  // 🆕 Emoji State
+  // Emoji State
   String? _currentEmoji;
-  int _lastTurnStatus = 0;
+  int? _lastEmotionTriggeredTurnId;
+
+  // Pending emotion trigger (for delayed triggering)
+  ({String emotion, String? emoji})? _pendingEmotionTrigger;
 
   FrameSelector({
     required this.vadConfig,
@@ -200,21 +175,25 @@ class FrameSelector {
     );
   }
 
-  /// Select animation frame based on emotion, mouth state, and eyes state
+  /// Select animation frame based on emotion, mouth state, and eyes state (pure method)
   String _selectFrame(
     String emotion,
     MouthIntensity mouthState,
     EyesState eyesState,
   ) {
-    // Get emotion image set
-    final imageSet = getEmotionImageSet(emotion);
+    // 1. Get emotion image set with fallback to [peace]
+    var imageSet = getEmotionImageSet(emotion);
     if (imageSet == null) {
-      throw Exception(
-        "[ANIMATION] Emotion '$emotion' not found - backend data integrity error",
-      );
+      debugPrint("[ANIMATION] Emotion '$emotion' not found, falling back to [peace]");
+      imageSet = getEmotionImageSet('[peace]');
+      if (imageSet == null) {
+        throw Exception(
+          "[ANIMATION] Critical: Default emotion '[peace]' not found - backend data integrity error",
+        );
+      }
     }
 
-    // Select image based on eyes and mouth state
+    // 2. Select image based on eyes and mouth state
     final eyesClosed = eyesState == EyesState.closed;
     final mouthClosed = mouthState == MouthIntensity.closed;
 
@@ -232,65 +211,73 @@ class FrameSelector {
   /// Process a single frame and return rendering output
   FrameOutput processFrame(FrameInput input) {
     final audioMetrics = input.audioMetrics;
-    final pendingSubtitle = input.pendingSubtitle;
+    final currentMessage = input.currentMessage;
     final frameNumber = input.frameNumber;
 
     final energy = audioMetrics.energy;
     final zcr = audioMetrics.zcr;
 
-    // 1. Classify voice activity
+    // Incoming emotion from latest message (do NOT render immediately; wait until SPEAKING starts)
+    final incomingEmotion = currentMessage?.emotion ?? '[peace]';
+
+    // 1. Voice activity detection
     final newVoiceActivity = classifyVoiceActivity(energy, zcr, vadConfig);
     final smoothedActivity = _voiceActivityManager.smooth(newVoiceActivity);
 
-    // 2. Process emoji/PAG only when turnStatus changes from 0 to 1
-    final currentTurnStatus = input.currentTurnStatus ?? 0;
-    if (currentTurnStatus == 1 && _lastTurnStatus != 1) {
-      // Update emoji state
-      if (input.currentTurnEmoji != null) {
-        _currentEmoji = input.currentTurnEmoji;
-        debugPrint('😊 [EMOJI] Set emoji in frameSelector: ${input.currentTurnEmoji}');
-        debugPrint('🚫 [PAG] Skipped due to emoji priority');
+    // 2. 处理 turnStatus === 1（情绪触发）
+    final turnStatus = currentMessage?.turnStatus ?? 0;
+    final turnId = currentMessage?.turnId;
+
+    // Use turnId-based dedupe (instead of 0→1 edge) to avoid missing triggers
+    final shouldTriggerForThisTurn =
+        turnStatus == 1 && turnId != null && turnId != _lastEmotionTriggeredTurnId;
+
+    if (shouldTriggerForThisTurn) {
+      final emotion = incomingEmotion;
+      final emoji = currentMessage?.emoji;
+
+      if (_currentDetectedState == ActorState.speaking) {
+        // 已在 SPEAKING 状态 → 立即触发
+        _triggerEmotionAnimation(emotion, emoji);
+        debugPrint('✅ [EMOTION] Triggered immediately (already SPEAKING)');
       } else {
-        // No emoji → trigger PAG animation
-        // 使用 _currentEmotion（字幕显示时已保存）而不依赖 pendingSubtitle
-        final emotionForPAG = _currentEmotion.isNotEmpty ? _currentEmotion : '[peace]';
-        final idForPAG = DateTime.now().millisecondsSinceEpoch.toString();
-        _triggerPAGAnimation(emotionForPAG, idForPAG);
-        debugPrint('🎨 [PAG] Lottery triggered (no emoji), emotion: $emotionForPAG');
+        // 还在 IDLE 状态 → 暂存，等 SPEAKING 开始时触发
+        _pendingEmotionTrigger = (emotion: emotion, emoji: emoji);
+        debugPrint('⏳ [EMOTION] Queued for SPEAKING start');
       }
+
+      _lastEmotionTriggeredTurnId = turnId;
     }
-    _lastTurnStatus = currentTurnStatus;
 
-    // 3. Check if we should display pending subtitle (voice detected)
+    // 3. 字幕显示判断 + 状态转换 + 触发 pending
     bool shouldDisplaySubtitle = false;
-    DisplayedSubtitle? displayedSubtitle;
+    String? messageIdToDisplay;
 
-    if (pendingSubtitle != null &&
-        newVoiceActivity != VoiceActivityState.quiet) {
-      // New subtitle arrives + voice detected → display it
+    if (currentMessage != null && newVoiceActivity == VoiceActivityState.active) {
       shouldDisplaySubtitle = true;
-      displayedSubtitle = DisplayedSubtitle(
-        id: pendingSubtitle.id,
-        content: pendingSubtitle.content,
-        emotion: pendingSubtitle.emotion,
-        emoji: input.currentTurnEmoji,
-        turnStatus: input.currentTurnStatus,
-      );
-
-      // Update emotion
-      _currentEmotion = pendingSubtitle.emotion;
-
-      // Record subtitle frame in history
+      messageIdToDisplay = currentMessage.id;
       _speechHistoryManager.recordSubtitleFrame(frameNumber);
 
-      // State detection: subtitle + voice → SPEAKING
+      // 状态转换：IDLE → SPEAKING
+      final wasIdle = _currentDetectedState == ActorState.idle;
       _currentDetectedState = ActorState.speaking;
-
-      // Reset speech history when entering speaking state
       _speechHistoryManager.reset();
+
+      // Only update rendered emotion when we actually start SPEAKING / display subtitle
+      _currentRenderedEmotion = incomingEmotion;
+
+      // 检测 SPEAKING 开始，触发 pending 的情绪动画
+      if (wasIdle && _pendingEmotionTrigger != null) {
+        _triggerEmotionAnimation(
+          _pendingEmotionTrigger!.emotion,
+          _pendingEmotionTrigger!.emoji,
+        );
+        _pendingEmotionTrigger = null;
+        debugPrint('✅ [EMOTION] Triggered at SPEAKING start');
+      }
     }
 
-    // 4. Update speech history for finish detection
+    // 4. Speech history update (finish detection)
     final speechHistoryResult = _speechHistoryManager.update(
       SpeechHistoryInput(
         voiceActivity: smoothedActivity,
@@ -299,42 +286,36 @@ class FrameSelector {
       ),
     );
 
-    // 5. Detect state transitions
-    if (speechHistoryResult.shouldFinishSpeaking) {
-      // Sustained quiet → IDLE
+    // 仅在"确实进入过 SPEAKING"时才允许 finish 生效
+    if (_currentDetectedState == ActorState.speaking &&
+        speechHistoryResult.shouldFinishSpeaking) {
+      debugPrint('[SUBTITLE] shouldFinishSpeaking');
       _currentDetectedState = ActorState.idle;
-      _speechHistoryManager.setIdleStateStartFrame(frameNumber);
-      _lastSubtitleId = null; // Reset for next turn
-    } else if (speechHistoryResult.shouldResumeFromIdle &&
-        _currentDetectedState == ActorState.idle) {
-      // Strong signal after idle → SPEAKING
-      _currentDetectedState = ActorState.speaking;
-      _speechHistoryManager.reset();
+      _pendingEmotionTrigger = null; // 清空 pending
+      _currentEmoji = null;
     }
 
-    // 6. Update eyes state (natural blinking)
+    // 5. Eyes & mouth state
     final eyesState = _eyesStateManager.update();
-
-    // 7. Update mouth state (audio-driven, state-aware)
-    final audioFeatures = AudioFeatureSet(
-      energy: energy,
-      zcr: zcr,
-      spectralCentroid: audioMetrics.spectralCentroid,
-      highFreqEnergy: audioMetrics.highFreqEnergy,
+    final mouthState = _mouthController.update(
+      AudioFeatureSet(
+        energy: energy,
+        zcr: zcr,
+        spectralCentroid: audioMetrics.spectralCentroid,
+        highFreqEnergy: audioMetrics.highFreqEnergy,
+      ),
     );
-    final mouthState = _mouthController.update(audioFeatures);
 
-    // 8. Select character frame (emotion + mouth + eyes)
-    final imageUrl = _selectFrame(_currentEmotion, mouthState, eyesState);
+    // 6. Select frame (emotion only updates when SPEAKING starts)
+    final imageUrl = _selectFrame(_currentRenderedEmotion, mouthState, eyesState);
 
     return FrameOutput(
       imageUrl: imageUrl,
-      pag: _pagSrc != null ? PAGOutput(src: _pagSrc!, isPlaying: true) : null,
-      emoji: _currentEmoji, // 🆕 返回当前 emoji
+      pag: _pagSrc,
+      emoji: _currentEmoji,
       detectedState: _currentDetectedState,
-      currentEmotion: _currentEmotion,
       shouldDisplaySubtitle: shouldDisplaySubtitle,
-      displayedSubtitle: displayedSubtitle,
+      messageIdToDisplay: messageIdToDisplay,
       debug: FrameDebugInfo(
         mouthState: mouthState,
         eyesState: eyesState,
@@ -344,28 +325,33 @@ class FrameSelector {
     );
   }
 
-  /// Trigger PAG animation for emotion (with random selection)
-  void _triggerPAGAnimation(String emotion, String subtitleId) {
-    // Check if this is a new subtitle
-    if (subtitleId == _lastSubtitleId) {
-      return; // Already processed
+  /// 触发情绪动画（Emoji 优先，否则 PAG）
+  void _triggerEmotionAnimation(String emotion, String? emoji) {
+    if (emoji != null) {
+      // 有 emoji：设置 emoji，跳过 PAG
+      _currentEmoji = emoji;
+      debugPrint('😊 [EMOJI] Set emoji: $emoji');
+      debugPrint('🚫 [PAG] Skipped due to emoji priority');
+    } else {
+      // 无 emoji：清空 emoji，触发 PAG 抽奖
+      _currentEmoji = null;
+      final selectedAnimation = selectRandomPAG(emotion);
+      if (selectedAnimation != null) {
+        _pagSrc = selectedAnimation.src;
+        final filename = selectedAnimation.src.split('/').last;
+        debugPrint('🎨 [PAG] Triggered: $emotion → $filename');
+      }
     }
-
-    // Random selection (reads from global config)
-    final selectedAnimation = selectRandomPAG(emotion);
-
-    if (selectedAnimation != null) {
-      final filename = selectedAnimation.src.split('/').last;
-      debugPrint('[Frame Selector] PAG triggered: $emotion → $filename');
-      _pagSrc = selectedAnimation.src;
-    }
-
-    _lastSubtitleId = subtitleId;
   }
 
   /// Reset PAG animation (called when PAG animation ends)
   void resetPAG() {
     _pagSrc = null;
+  }
+
+  /// Reset Emoji (called when Emoji overlay animation ends)
+  void resetEmoji() {
+    _currentEmoji = null;
   }
 
   /// Get current detected state (for external coordination)

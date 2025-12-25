@@ -5,6 +5,8 @@
 
 import 'package:flutter/foundation.dart';
 
+import '../config/emotion.dart';
+
 /// 情绪图像集（4张图像覆盖所有眼睛/嘴巴状态组合）
 class EmotionImageSet {
   /// 闭眼闭嘴
@@ -63,18 +65,35 @@ class EmotionImageSetsManager {
   /// Value: 对应的4张图像
   final Map<String, EmotionImageSet> _emotionImageSets = {};
 
-  /// 获取情绪图像集
-  /// @param emotion - 情绪标签
-  /// @returns 图像集或 null（如果情绪不存在）
+  /// 获取情绪图像集（支持同义词映射）
+  /// @param emotion - 情绪标签（如 '[happy]', '[joyful]'）
+  /// @returns 图像集或 null（如果情绪不存在且无法映射）
   EmotionImageSet? getEmotionImageSet(String emotion) {
-    final imageSet = _emotionImageSets[emotion];
-    if (imageSet == null) {
-      if (_emotionImageSets.isNotEmpty) {
-        debugPrint("[IMAGE SETS] Emotion '$emotion' not found");
-      }
-      return null;
+    // 1. 直接查找
+    var imageSet = _emotionImageSets[emotion];
+    if (imageSet != null) {
+      return imageSet;
     }
-    return imageSet;
+
+    // 2. 尝试同义词映射
+    // 从 '[joyful]' 提取 'joyful'
+    if (emotion.startsWith('[') && emotion.endsWith(']')) {
+      final emotionWord = emotion.substring(1, emotion.length - 1).toLowerCase();
+      final coreEmotion = synonymToCoreEmotion[emotionWord];
+      if (coreEmotion != null) {
+        imageSet = _emotionImageSets[coreEmotion];
+        if (imageSet != null) {
+          debugPrint('[IMAGE SETS] Mapped $emotion → $coreEmotion');
+          return imageSet;
+        }
+      }
+    }
+
+    // 3. 未找到
+    if (_emotionImageSets.isNotEmpty) {
+      debugPrint("[IMAGE SETS] Emotion '$emotion' not found");
+    }
+    return null;
   }
 
   /// 批量设置情绪图像集（会合并到现有集合）

@@ -149,7 +149,7 @@ const Map<String, List<String>> emotionSynonymMap = {
 
 /// Reverse lookup map: Synonym (lowercase) -> Core emotion tag
 /// Built from emotionSynonymMap for efficient lookup
-final Map<String, String> _synonymToCoreEmotion = _buildSynonymMap();
+final Map<String, String> synonymToCoreEmotion = _buildSynonymMap();
 
 Map<String, String> _buildSynonymMap() {
   final map = <String, String>{};
@@ -318,7 +318,7 @@ EmotionExtractResult extractEmotion(String text) {
     }
 
     // 2. Try synonym mapping
-    final coreEmotion = _synonymToCoreEmotion[emotionWord.toLowerCase()];
+    final coreEmotion = synonymToCoreEmotion[emotionWord.toLowerCase()];
     if (coreEmotion != null) {
       // ignore: avoid_print
       print('🔄 [EMOTION MAPPING] $emotionTag → $coreEmotion');
@@ -376,7 +376,7 @@ ExtractTagsResult extractTags(String text) {
     } else {
       // 2.2. Try synonym mapping
       final coreEmotion =
-          _synonymToCoreEmotion[emotionTag.value.toLowerCase()];
+          synonymToCoreEmotion[emotionTag.value.toLowerCase()];
       if (coreEmotion != null) {
         // ignore: avoid_print
         print('🔄 [EMOTION MAPPING] $emotionWithBrackets → $coreEmotion');
