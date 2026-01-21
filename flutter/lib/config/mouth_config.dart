@@ -197,16 +197,16 @@ class MouthConfig {
 const defaultMouthConfig = MouthConfig(
   // Basic thresholds
   mouthCloseThreshold: 0.001, // Energy below this closes mouth
-  maxMouthOpenDuration: 12, // 0.5s max open (12 frames @ 24fps)
-  microPauseThreshold: 0.0008, // Micro-pause detection threshold
-  adaptiveThresholdFactor: 0.8, // 80% of average energy
+  maxMouthOpenDuration: 18, // 0.75s max open (18 frames @ 24fps)
+  microPauseThreshold: 0.001, // Micro-pause detection threshold
+  adaptiveThresholdFactor: 0.78, // 78% of average energy
   mouthDecayRate: 0.85, // 85% decay rate (15% reduction per frame)
   decayClosedThreshold: 0.5, // Below 0.5 intensity value = closed
 
   // Energy history parameters
-  energyHistoryWindow: 8, // Track last 8 frames of energy
+  energyHistoryWindow: 9, // Track last 9 frames of energy
   recentAvgWindow: 4, // Last 4 frames for recent average
-  olderAvgWindow: 4, // First 4 frames for older average
+  olderAvgWindow: 5, // First 5 frames for older average
   minEnergyValuesForAdaptive:
       6, // Need 6 values before adaptive threshold activates
 
